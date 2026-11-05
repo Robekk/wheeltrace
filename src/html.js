@@ -1,0 +1,229 @@
+export const HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WheelTrace — live Squeekchain telemetry</title>
+<meta name="description" content="A live, read-only view of Squeekchain's hamster wheel: RPM, block progress, cumulative work and distance, drawn from the public API." />
+<style>
+  :root{--bg:#1A1A20;--panel:#20202a;--line:#2e2e3a;--ink:#EDEDF2;--dim:#8b8b9b;--hot:#F5C542;--cool:#6ee7b7;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "IBM Plex Mono",ui-monospace,monospace}
+  header{padding:22px 24px 10px;display:flex;flex-wrap:wrap;align-items:baseline;gap:14px;border-bottom:1px solid var(--line)}
+  h1{font:600 26px/1 "Barlow Condensed",system-ui,sans-serif;letter-spacing:.14em;margin:0;text-transform:uppercase}
+  .tag{font-size:11px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
+  main{display:grid;grid-template-columns:minmax(280px,1fr) minmax(320px,1.4fr);gap:18px;padding:18px 24px 40px}
+  @media(max-width:820px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .card h2{font:600 12px/1 "Barlow Condensed",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin:0 0 12px}
+  #wheel{display:block;width:100%;height:auto;aspect-ratio:1;max-height:340px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat{background:#191921;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .stat b{display:block;font:600 22px/1.1 "Barlow Condensed",sans-serif;letter-spacing:.04em}
+  .stat span{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  #spark{display:block;width:100%;height:150px;background:#191921;border:1px solid var(--line);border-radius:10px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .row:last-child{border:0}
+  .row i{color:var(--dim);font-style:normal}
+  .bar{height:10px;background:#191921;border:1px solid var(--line);border-radius:99px;overflow:hidden;margin-top:8px}
+  .bar>div{height:100%;width:0;background:linear-gradient(90deg,var(--hot),var(--cool));transition:width .6s ease}
+  footer{padding:0 24px 30px;color:var(--dim);font-size:11px;max-width:900px}
+  a{color:var(--hot)}
+  .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:7px;vertical-align:middle}
+  .pulse.on{background:var(--cool);box-shadow:0 0 0 0 rgba(110,231,183,.55);animation:p 1.6s infinite}
+  @keyframes p{70%{box-shadow:0 0 0 9px rgba(110,231,183,0)}100%{box-shadow:0 0 0 0 rgba(110,231,183,0)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>WheelTrace</h1>
+  <span class="tag">live hamster telemetry</span>
+  <span class="tag" id="state"><span class="pulse" id="dot"></span>connecting…</span>
+</header>
+<main>
+  <section class="card">
+    <h2>The wheel</h2>
+    <canvas id="wheel" width="640" height="640"></canvas>
+    <div class="grid" style="margin-top:12px">
+      <div class="stat"><span>RPM</span><b id="rpm">–</b></div>
+      <div class="stat"><span>Speed mm/s</span><b id="speed">–</b></div>
+      <div class="stat"><span>Distance</span><b id="dist">–</b></div>
+      <div class="stat"><span>Work units</span><b id="work">–</b></div>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Block &amp; chain</h2>
+    <div class="row"><i>Block height</i><b id="height">–</b></div>
+    <div class="bar"><div id="bprogress"></div></div>
+    <div class="row" style="margin-top:10px"><i>Block progress</i><b id="bpct">–</b></div>
+    <div class="row"><i>Settled round</i><b id="round">–</b></div>
+    <div class="row"><i>Indexed block</i><b id="idx">–</b></div>
+    <div class="row"><i>Total supply</i><b id="supply">–</b></div>
+    <h2 style="margin-top:18px">RPM trace (this session)</h2>
+    <canvas id="spark" width="900" height="300"></canvas>
+    <div class="row" style="margin-top:12px"><i>Provenance</i><b id="prov">–</b></div>
+    <div class="row"><i>Observed</i><b id="obs">–</b></div>
+    <div class="row"><i>Last tx</i><b id="tx" style="font-size:11px;max-width:55%;overflow:hidden;text-overflow:ellipsis">–</b></div>
+  </section>
+</main>
+<footer>
+  Read-only. Every number on this page comes straight from <code>api.squeekchain.com/v1/status</code> and
+  <code>/v1/economy/state</code> — nothing is signed, no keys are stored.
+  Wheel angle integrates the reported RPM; the trace is sampled in your browser, so a reload starts a new one.
+  Data © Squeekchain · built for the code lane.
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+const samples = [];
+let angle = 0, last = performance.now(), rpm = 0;
+
+function fmt(n, d = 2) {
+  if (n == null || Number.isNaN(n)) return '–';
+  if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(2) + 'k';
+  return Number(n).toFixed(d);
+}
+
+function drawWheel() {
+  const c = $('wheel'), x = c.getContext('2d');
+  const w = c.width, h = c.height, cx = w / 2, cy = h / 2, R = w * 0.36;
+  x.clearRect(0, 0, w, h);
+
+  // frame
+  x.strokeStyle = '#2e2e3a'; x.lineWidth = 2;
+  x.beginPath(); x.arc(cx, cy, R + 18, 0, Math.PI * 2); x.stroke();
+
+  // wheel ring
+  const grad = x.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+  grad.addColorStop(0, '#F5C542'); grad.addColorStop(1, '#6ee7b7');
+  x.strokeStyle = rpm > 0 ? grad : '#3a3a48';
+  x.lineWidth = 8;
+  x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.stroke();
+
+  // spokes
+  x.save(); x.translate(cx, cy); x.rotate(angle);
+  x.strokeStyle = rpm > 0 ? '#EDEDF2' : '#55556a'; x.lineWidth = 3;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    x.beginPath();
+    x.moveTo(Math.cos(a) * R * 0.18, Math.sin(a) * R * 0.18);
+    x.lineTo(Math.cos(a) * R * 0.94, Math.sin(a) * R * 0.94);
+    x.stroke();
+  }
+  // rim dots
+  for (let i = 0; i < 48; i++) {
+    const a = (i / 48) * Math.PI * 2;
+    x.fillStyle = i % 4 === 0 ? '#F5C542' : '#3a3a48';
+    x.beginPath(); x.arc(Math.cos(a) * (R + 12), Math.sin(a) * (R + 12), i % 4 === 0 ? 4 : 2.5, 0, Math.PI * 2); x.fill();
+  }
+  x.restore();
+
+  // hamster
+  x.save(); x.translate(cx, cy); x.rotate(angle * 0.98 + 0.3);
+  x.fillStyle = rpm > 0 ? '#F5C542' : '#6b6b7d';
+  x.beginPath(); x.ellipse(R * 0.62, 0, R * 0.17, R * 0.13, 0, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#1A1A20';
+  x.beginPath(); x.arc(R * 0.70, -R * 0.03, R * 0.022, 0, Math.PI * 2); x.fill();
+  x.fillStyle = rpm > 0 ? '#EDEDF2' : '#4a4a5a';
+  x.beginPath(); x.arc(R * 0.52, R * 0.05, R * 0.05, 0, Math.PI * 2); x.fill();
+  x.restore();
+
+  // hub
+  x.fillStyle = '#20202a'; x.strokeStyle = '#3a3a48'; x.lineWidth = 2;
+  x.beginPath(); x.arc(cx, cy, R * 0.13, 0, Math.PI * 2); x.fill(); x.stroke();
+  x.fillStyle = rpm > 0 ? '#6ee7b7' : '#55556a';
+  x.beginPath(); x.arc(cx, cy, R * 0.05, 0, Math.PI * 2); x.fill();
+
+  x.fillStyle = '#8b8b9b'; x.font = '600 16px "Barlow Condensed", sans-serif';
+  x.textAlign = 'center';
+  x.fillText(rpm > 0 ? 'RUNNING' : 'ASLEEP', cx, cy + R + 58);
+}
+
+function drawSpark() {
+  const c = $('spark'), x = c.getContext('2d');
+  const w = c.width, h = c.height, pad = 22;
+  x.clearRect(0, 0, w, h);
+  if (samples.length < 2) return;
+  const max = Math.max(1, ...samples.map(s => s.rpm));
+  x.strokeStyle = '#2e2e3a'; x.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) { const y = pad + (h - pad * 2) * (i / 4); x.beginPath(); x.moveTo(pad, y); x.lineTo(w - pad, y); x.stroke(); }
+  const px = i => pad + (w - pad * 2) * (i / (samples.length - 1));
+  const py = v => h - pad - (h - pad * 2) * (v / max);
+  const grd = x.createLinearGradient(0, pad, 0, h - pad);
+  grd.addColorStop(0, 'rgba(245,197,66,.35)'); grd.addColorStop(1, 'rgba(245,197,66,0)');
+  x.beginPath(); x.moveTo(px(0), h - pad);
+  samples.forEach((s, i) => x.lineTo(px(i), py(s.rpm)));
+  x.lineTo(px(samples.length - 1), h - pad); x.closePath(); x.fillStyle = grd; x.fill();
+  x.beginPath();
+  samples.forEach((s, i) => i ? x.lineTo(px(i), py(s.rpm)) : x.moveTo(px(i), py(s.rpm)));
+  x.strokeStyle = '#F5C542'; x.lineWidth = 2.5; x.stroke();
+  x.fillStyle = '#8b8b9b'; x.font = '16px "IBM Plex Mono", monospace'; x.textAlign = 'left';
+  x.fillText(max.toFixed(1) + ' rpm', pad + 4, pad + 18);
+  x.fillText('0', pad + 4, h - pad - 6);
+}
+
+function tick(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  angle += (rpm / 60) * Math.PI * 2 * dt;
+  if (angle > Math.PI * 2) angle -= Math.PI * 2;
+  drawWheel();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function render(s) {
+  rpm = s.rpm || 0;
+  $('rpm').textContent = rpm.toFixed(2);
+  $('speed').textContent = (s.speedMmPerSecond || 0).toFixed(2);
+  $('dist').textContent = fmt(s.metersTravelled, 2) + ' m';
+  $('work').textContent = fmt(s.cumulativeWorkUnits, 0);
+  $('height').textContent = s.blockHeight ?? '–';
+  $('bpct').textContent = (s.blockProgressPct || 0).toFixed(1) + '%';
+  $('bprogress').style.width = Math.min(100, s.blockProgressPct || 0) + '%';
+  $('round').textContent = s.settledThroughRound ?? '–';
+  $('idx').textContent = s.economy?.indexedThroughBlock ?? '–';
+  $('supply').textContent = s.economy?.totalSupply ? fmt(Number(s.economy.totalSupply) / 1e18, 2) + ' SQK' : '–';
+  $('prov').textContent = s.provenance || '–';
+  $('obs').textContent = s.observedAt ? new Date(s.observedAt).toLocaleTimeString() : '–';
+  const tx = s.lastTx || '';
+  $('tx').textContent = tx ? tx.slice(0, 10) + '…' + tx.slice(-6) : '–';
+  $('tx').title = tx;
+  $('dot').className = 'pulse' + (s.isRunning ? ' on' : '');
+  $('state').lastChild.nodeValue = s.coreStatus ? ' ' + s.coreStatus.toLowerCase() : ' live';
+  samples.push({ t: Date.now(), rpm });
+  if (samples.length > 240) samples.shift();
+  drawSpark();
+}
+
+function drawSparkIdle() {
+  // Paint a flat baseline immediately so the canvas isn't blank before the 2nd sample.
+  const c = $('spark'), x = c.getContext('2d');
+  const w = c.width, h = c.height, pad = 22;
+  x.clearRect(0, 0, w, h);
+  x.strokeStyle = '#2e2e3a'; x.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) { const y = pad + (h - pad * 2) * (i / 4); x.beginPath(); x.moveTo(pad, y); x.lineTo(w - pad, y); x.stroke(); }
+  x.strokeStyle = '#F5C542'; x.lineWidth = 2.5; x.globalAlpha = 0.35;
+  x.beginPath(); x.moveTo(pad, h - pad); x.lineTo(w - pad, h - pad); x.stroke();
+  x.globalAlpha = 1;
+  x.fillStyle = '#8b8b9b'; x.font = '16px "IBM Plex Mono", monospace';
+  x.fillText('waiting for samples…', pad + 6, h / 2);
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/wheel', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    $('state').lastChild.nodeValue = ' offline';
+    $('dot').className = 'pulse';
+  }
+  setTimeout(poll, 6000);
+}
+poll();
+drawSparkIdle();
+</script>
+</body>
+</html>`;
+export default { HTML };

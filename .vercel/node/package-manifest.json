@@ -1,0 +1,9 @@
+{
+  "version": "20260304",
+  "runtime": "node",
+  "framework": "node",
+  "runtimeVersion": {
+    "resolved": "26"
+  },
+  "dependencies": []
+}
