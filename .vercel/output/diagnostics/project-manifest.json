@@ -1,1 +1,0 @@
-{"@vercel/backends:.":{"version":"20260304","runtime":"node","framework":"node","runtimeVersion":{"resolved":"26"},"dependencies":[],"buildType":"app","workspace":".","builder":"@vercel/backends"},"@vercel/static:.":{"version":"20260304","runtime":"static","buildType":"app","dependencies":[],"workspace":".","builder":"@vercel/static"}}

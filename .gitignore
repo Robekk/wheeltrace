@@ -1,3 +1,5 @@
 node_modules/
-serve.log
 *.log
+.netlify/
+.vercel/
+.wrangler/
