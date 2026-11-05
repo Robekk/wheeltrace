@@ -48,3 +48,5 @@ snapshot.json   fallback snapshot bundled into the build
 ## Licence
 
 MIT
+
+squeekchain-project: 2b826b2b-6faf-4afa-8b0d-d4f819a15200
