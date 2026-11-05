@@ -3,3 +3,4 @@ node_modules/
 .netlify/
 .vercel/
 .wrangler/
+vercel.json
